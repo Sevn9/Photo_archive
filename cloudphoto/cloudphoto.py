@@ -5,7 +5,7 @@ import os
 from botocore.exceptions import ClientError
 import configparser
 
-
+# Для теста;)
 def hello():
     name = input("Введите имя: ")
     return f'Hello {name}!'
@@ -26,15 +26,14 @@ def upload(album, path=None):
         print(filename)
     print('----------------------------------')
 
-    # работает только из основной директории
-    # s3.upload_file(str(filename), 'itis-vvot-30', uploadDir)
 
     # загружаем файлы найденные в папке
     try:
-        for filename in os.listdir(newPath):
-            print('uploading file ' + filename)
-            uploadDir = album + '/' + filename
-            s3.put_object(Bucket='itis-vvot-30', Key=uploadDir, Body=filename, ContentType='image/jpeg')
+        for key in os.listdir(newPath):
+            print('uploading file ' + key)
+            uploadDir = album + '/' + key
+            filename = newPath + '/' + str(key)
+            s3.upload_file(filename, bucket_name, uploadDir)
 
         print('uploaded')
         print('----------------------------------')
@@ -79,7 +78,6 @@ def list(album=None):
         for key in s3.list_objects(Bucket=bucket_name)['Contents']:
             album_set.add(key["Key"].split("/")[0])
 
-        # print(album_set)
         for item in album_set:
             my_str = str(item)
             if my_str.endswith('.html'):
@@ -104,7 +102,6 @@ def list(album=None):
                                    Delimiter="/", )['Contents']:
             photos.append(key["Key"].split("/")[1])
             print(photos)
-            # print(key['Key'] + "\n")
         print('----------------------------------')
 
 
@@ -146,7 +143,6 @@ def delete(album, photo=None):
 #  Генерация и публикация веб-страниц фотоархива
 # cloudphoto mksite
 def mksite():
-    n = 0
     # вывести список имен альбомов
     print('Список альбомов: ')
     url = f'https://{bucket_name}.website.yandexcloud.net/'
@@ -167,7 +163,7 @@ def mksite():
     print('Список html страниц: ')
     print(sites)
     # Генерация страниц альбомов
-    albumCh1 = '<!doctype html><html><head>' \
+    albumCh1 = '<!doctype html><html><head> <meta charset="utf-8"> ' \
                '<link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/galleria/1.6.1/themes/classic/galleria.classic.min.css" />' \
                '<style> .galleria{ width: 960px; height: 540px; background: #000 }</style>' \
                '<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>' \
@@ -188,7 +184,6 @@ def mksite():
             photos.append(photo)
             albumCh2 = albumCh2 + f'<img src="https://{bucket_name}.website.yandexcloud.net/{item}/{photo}" data-title="{photo}">'
         print(photos)
-        # print(key['Key'] + "\n")
         print('----------------------------------')
 
     albumCh3 = '</div><p>Вернуться на <a href="index.html">главную страницу</a> фотоархива</p>' \
@@ -204,12 +199,22 @@ def mksite():
         file = open(f"album{itter}.html", "w", encoding="utf-8")
         file.write(album)
         file.close()
+
+    newPath = './'
+    # Загрузить страницы альбомов
+    for i in range(len(albums)):
+        filename_album = newPath + "/" + f'album{i+1}.html'
+        print('uploading album: ', i+1)
+        s3.upload_file(filename_album, bucket_name, f'album{i+1}.html')
+    print('albums uploaded')
+    print('----------------------------------')
     # создать переменную с кодом страницы index и error
     indexCh1 = '<!doctype html> <html> <head> <meta charset="utf-8"> ' \
                '<title>Фотоархив</title> </head> <body> <h1>Фотоархив</h1> <ul>'
 
     indexCh3 = '</ul> </body>'
     index = indexCh1 + indexCh2 + indexCh3
+
     error = '<!doctype html> <html> <head> <meta charset="utf-8"> <title>Фотоархив</title>' \
             '</head> <body><h1>Ошибка</h1><p>Ошибка при доступе к фотоархиву. Вернитесь на <a href="index.html">главную страницу</a> фотоархива.</p>' \
             '</body></html>'
@@ -222,26 +227,31 @@ def mksite():
     file.close()
 
     # загружаем файлы найденные в папке
-    newPath = './'
-    for filename in os.listdir(newPath):
-        if filename == 'index.html' or filename == 'error.html':
-            print('uploading file ' + filename)
-            s3.upload_file(filename, {bucket_name}, filename)
+    for key in os.listdir(newPath):
+        if key == 'index.html' or key == 'error.html':
+            print('uploading file ' + key)
+            filename = newPath + str(key)
+            s3.upload_file(filename, bucket_name, key)
     print('uploaded')
     print('----------------------------------')
 
-    # Проверить
     # Define the website configuration
     website_configuration = {
         'ErrorDocument': {'Key': 'error.html'},
         'IndexDocument': {'Suffix': 'index.html'},
     }
-    # Set the website configuration
-    s3.put_bucket_website(Bucket=bucket_name,
-                          WebsiteConfiguration=website_configuration)
-    result = s3.get_bucket_website(Bucket=bucket_name)
-    print(f'https://{bucket_name}.website.yandexcloud.net/')
-    return result
+    try:
+        # Set the website configuration
+        s3.put_bucket_website(Bucket=bucket_name,
+                              WebsiteConfiguration=website_configuration)
+        result = s3.get_bucket_website(Bucket=bucket_name)
+        print("Ваша ссылка: ")
+        print(f'https://{bucket_name}.website.yandexcloud.net/')
+        print('----------------------------------')
+    except ClientError as e:
+        logging.error(e)
+        return False
+    return True
 
 
 def init():
@@ -261,7 +271,7 @@ def init():
 
         if find_bucket_count == 1:
             # Создать новый бакет
-            s3.create_bucket(Bucket=f'{bucket}')
+            s3.create_bucket(Bucket=f'{bucket}', ACL='public-read-write')
 
         awsAccessKeyId = input("Введите aws access key id: ")
         awsSecretAccessKey = input("Введите aws secret access key: ")
@@ -292,7 +302,6 @@ if __name__ == '__main__':
         config = configparser.ConfigParser()  # создаём объекта парсера
         config.read(f"{dirNeed}/cloudphotorc.ini")  # читаем конфиг
 
-        # нужна проверка на существование бакета и если нет создавать с публичным доступом
         s3 = session.client(
             's3',
             aws_access_key_id=config["default"]["aws_access_key_id"],
