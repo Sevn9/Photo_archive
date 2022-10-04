@@ -8,7 +8,6 @@ import configparser
 
 def hello():
     name = input("Введите имя: ")
-    # print('-----------------------------------------------')
     return f'Hello {name}!'
 
 
@@ -28,14 +27,15 @@ def upload(album, path=None):
     print('----------------------------------')
 
     # работает только из основной директории
-    # s3.upload_file(f'{items[0]}', 'itis-vvot-30', uploadTemp)
+    # s3.upload_file(str(filename), 'itis-vvot-30', uploadDir)
 
     # загружаем файлы найденные в папке
     try:
         for filename in os.listdir(newPath):
             print('uploading file ' + filename)
             uploadDir = album + '/' + filename
-            s3.put_object(Bucket='itis-vvot-30', Key=uploadDir, Body=filename)
+            s3.put_object(Bucket='itis-vvot-30', Key=uploadDir, Body=filename, ContentType='image/jpeg')
+
         print('uploaded')
         print('----------------------------------')
     except ClientError as e:
@@ -55,7 +55,13 @@ def download(album, path=None):
         # используем выбранный каталог
         newPath = path
     try:
-        s3.download_file('itis-vvot-30', f'{album}/pts.png', f'{newPath}/pts1.png')
+        # Загрузка из альбома
+        for key in s3.list_objects(
+                Bucket=bucket_name, Prefix=album + "/", Delimiter="/")["Contents"]:
+            s3.download_file(Bucket=bucket_name,
+                             Key=key['Key'],
+                             Filename=os.path.join(newPath, key['Key'].split('/')[1]))
+
     except ClientError as e:
         logging.error(e)
         return False
@@ -140,8 +146,10 @@ def delete(album, photo=None):
 #  Генерация и публикация веб-страниц фотоархива
 # cloudphoto mksite
 def mksite():
+    n = 0
     # вывести список имен альбомов
     print('Список альбомов: ')
+    url = f'https://{bucket_name}.website.yandexcloud.net/'
     album_set = set()
     sites = []
     albums = []
@@ -167,24 +175,40 @@ def mksite():
                '<script src="https://cdnjs.cloudflare.com/ajax/libs/galleria/1.6.1/themes/classic/galleria.classic.min.js"></script>' \
                '</head><body><div class="galleria">'
 
-    albumCh2 = '<img src="URL_на_фотографию_1_в_альбоме" data-title="Имя_исходного_файла_фотографии_1">' \
-               '<img src="URL_на_фотографию_2_в_альбоме" data-title="Имя_исходного_файла_фотографии_2">' \
-               '<img src="..." data-title="...">' \
-               '<img src="URL_на_фотографию_N_в_альбоме" data-title="Имя_исходного_файла_фотографии_N">'
+    albumCh2 = ''
+
+    # достать фото из каждого альбома и засунуть в страницу альбома
+    for item in albums:
+        album = item
+        print(f'Список фотографий в альбоме {album}: ')
+        photos = []
+        for key in s3.list_objects(Bucket=bucket_name, Prefix=album + "/",
+                                   Delimiter="/", )['Contents']:
+            photo = key["Key"].split("/")[1]
+            photos.append(photo)
+            albumCh2 = albumCh2 + f'<img src="https://{bucket_name}.website.yandexcloud.net/{item}/{photo}" data-title="{photo}">'
+        print(photos)
+        # print(key['Key'] + "\n")
+        print('----------------------------------')
 
     albumCh3 = '</div><p>Вернуться на <a href="index.html">главную страницу</a> фотоархива</p>' \
                '<script>(function() {Galleria.run(\'.galleria\');}());</script> </body></html>'
-    print(albumCh3)
 
+    album = albumCh1 + albumCh2 + albumCh3
+
+    indexCh2 = ''
+    itter = 0
+    for item in albums:
+        itter = itter + 1
+        indexCh2 = indexCh2 + f'<li><a href="album{itter}.html">{item}</a></li>'
+        file = open(f"album{itter}.html", "w", encoding="utf-8")
+        file.write(album)
+        file.close()
     # создать переменную с кодом страницы index и error
     indexCh1 = '<!doctype html> <html> <head> <meta charset="utf-8"> ' \
                '<title>Фотоархив</title> </head> <body> <h1>Фотоархив</h1> <ul>'
 
-    indexCh2 = '<li><a href="album1.html">Имя альбома 1</a></li>' \
-            '<li><a href="album2.html">Имя альбома 2</a></li>' \
-            '<li><a href="...">...</a></li>' \
-            '<li><a href="album{N}.html">Имя альбома N</a></li>'
-    indexCh3 = '</ul> </body'
+    indexCh3 = '</ul> </body>'
     index = indexCh1 + indexCh2 + indexCh3
     error = '<!doctype html> <html> <head> <meta charset="utf-8"> <title>Фотоархив</title>' \
             '</head> <body><h1>Ошибка</h1><p>Ошибка при доступе к фотоархиву. Вернитесь на <a href="index.html">главную страницу</a> фотоархива.</p>' \
@@ -202,7 +226,7 @@ def mksite():
     for filename in os.listdir(newPath):
         if filename == 'index.html' or filename == 'error.html':
             print('uploading file ' + filename)
-            #s3.upload_file(filename, 'itis-vvot-30', filename)
+            s3.upload_file(filename, {bucket_name}, filename)
     print('uploaded')
     print('----------------------------------')
 
@@ -223,7 +247,22 @@ def mksite():
 def init():
     num = input('Конфиг. файл уже создан? 1 - да, 0 - нет: ')
     if (num == 0):
+        print('Доступные бакеты: ')
+        bucketList = []
+        for bucket in s3.list_buckets()['Buckets']:
+            print(bucket['Name'])
+            bucketList.append(bucket['Name'])
+        print('----------------------------------')
         bucket = input("Введите название bucket: ")
+        find_bucket_count = 0
+        for item in bucketList:
+            if item == bucket:
+                find_bucket_count = 1
+
+        if find_bucket_count == 1:
+            # Создать новый бакет
+            s3.create_bucket(Bucket=f'{bucket}')
+
         awsAccessKeyId = input("Введите aws access key id: ")
         awsSecretAccessKey = input("Введите aws secret access key: ")
 
@@ -262,10 +301,6 @@ if __name__ == '__main__':
             endpoint_url=config["default"]["endpoint_url"],
         )
         bucket_name = config["default"]["bucket"]
-        print('----------------------------------')
-        print('Доступные бакеты: ')
-        for bucket in s3.list_buckets()['Buckets']:
-            print(bucket['Name'])
         print('----------------------------------')
         fire.Fire()
     else:
